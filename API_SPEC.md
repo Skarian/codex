@@ -1,10 +1,14 @@
 # ChatGPT Auth API Surface (Codex)
 
-## Scope and intent
+## Scope and intent (clarified)
 
-This document is a repo‑grounded description of the HTTP API surface used when Codex is authenticated via **ChatGPT** (not API key auth).
+This document is a repo‑grounded description of the full ChatGPT API surface that Codex uses when a user authenticates via **ChatGPT**.
+That includes the authentication endpoints themselves and all downstream APIs invoked during CLI sessions that carry ChatGPT credentials.
 It is intentionally limited to what the code in this repository proves and avoids speculation about undocumented server behavior.
-Every term of art is defined in plain language, and every endpoint listed here appears in the code paths that run under ChatGPT auth.
+Every term of art is defined in plain language, and every endpoint listed here appears in code paths used by ChatGPT‑authenticated sessions.
+
+Important nuance about transport: Codex can use HTTP SSE or WebSocket transport for Responses depending on the provider’s `wire_api` setting (including `responses_websocket`).
+This transport choice is a provider configuration, not a separate auth method; it can apply when ChatGPT auth is used if the provider is configured accordingly.【F:codex-rs/core/src/model_provider_info.rs†L40-L52】【F:codex-rs/core/src/client.rs†L246-L258】
 
 ## Key definitions (plain language)
 

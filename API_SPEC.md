@@ -169,6 +169,83 @@ For the default ChatGPT provider, this means the following paths are used under 
 The provider definition requires you to specify which wire API is used, and Codex cannot auto‑detect it.
 That distinction is documented in the provider metadata and is explicitly referenced in comments and enums tied to these endpoints.【F:codex-rs/core/src/model_provider_info.rs†L34-L52】【F:codex-rs/core/src/model_provider_info.rs†L136-L166】
 
+## Inference request payloads and headers (exhaustive fields observed in code)
+
+This section captures the concrete request fields and headers that the CLI and core code populate when talking to the ChatGPT‑backed inference endpoints.
+These details are derived from the request builders and protocol types in `codex-api` and `core`, not from external documentation.
+
+### Common headers set on inference requests
+
+- `session_id`
+  - Used to associate requests with a conversation/session when a conversation id is available.
+  - Built by `build_conversation_headers` and attached to both Responses and Chat request flows.【F:codex-rs/codex-api/src/requests/headers.rs†L5-L12】【F:codex-rs/codex-api/src/requests/chat.rs†L299-L308】
+
+- `x-openai-subagent`
+  - Optional header indicating a sub‑agent source (e.g., “review”), derived from `SessionSource::SubAgent`.
+  - Attached in both Chat and Responses request builders when a session source is set.【F:codex-rs/codex-api/src/requests/headers.rs†L14-L29】【F:codex-rs/codex-api/src/requests/chat.rs†L299-L308】【F:codex-rs/codex-api/src/requests/responses.rs†L147-L154】
+
+- `x-codex-beta-features`
+  - Comma‑separated list of enabled beta features, attached to Responses requests.
+  - Used to signal experimental behaviors to the backend.【F:codex-rs/core/src/client.rs†L640-L656】
+
+- `x-oai-web-search-eligible`
+  - Set to `true` or `false` depending on web search configuration.
+  - Attached to Responses requests to indicate whether web search is permitted.【F:codex-rs/core/src/client.rs†L657-L666】
+
+- `x-codex-turn-state`
+  - When present, attached to Responses requests to preserve backend turn state.
+  - Also captured from WebSocket response headers when using the WebSocket transport.【F:codex-rs/core/src/client.rs†L666-L671】【F:codex-rs/codex-api/src/endpoint/responses_websocket.rs†L31-L36】【F:codex-rs/codex-api/src/endpoint/responses_websocket.rs†L159-L171】
+
+### Responses API request body fields (`POST /responses`)
+
+The Responses request body is built from `ResponsesApiRequest` and includes the following fields when streaming:
+
+- `model`
+- `instructions`
+- `input` (array of response items/messages/tool calls)
+- `tools`
+- `tool_choice` (fixed to `auto`)
+- `parallel_tool_calls`
+- `reasoning` (optional; includes `effort` and `summary`)
+- `store` (boolean; defaults based on provider)
+- `stream` (true)
+- `include` (array of strings)
+- `prompt_cache_key` (optional)
+- `text` (optional; includes verbosity and JSON schema output formatting)【F:codex-rs/codex-api/src/common.rs†L78-L143】
+
+Additional behavior:
+
+- When `store` is true and the provider is Azure‑style, item ids are attached to request input entries if available (`id` fields are added to serialized input items).【F:codex-rs/codex-api/src/requests/responses.rs†L101-L141】【F:codex-rs/codex-api/src/requests/responses.rs†L165-L202】
+
+### Chat Completions request body fields (`POST /chat/completions`)
+
+The Chat Completions request body is constructed in `ChatRequestBuilder` and includes:
+
+- `model`
+- `messages` (system/user/assistant/tool messages)
+- `stream` (true)
+- `tools` (array of tool definitions)
+
+Messages are assembled from `ResponseItem` values and may include:
+
+- `role` (`system`, `user`, `assistant`, `tool`)
+- `content` (string or array of content items)
+- `tool_calls` (assistant‑role tool call payloads)
+- `tool_call_id` (tool output messages)
+- `reasoning` (assistant messages can include reasoning text, aggregated from prior reasoning items)
+
+Tool calls in Chat Completions are grouped into a single assistant message with `tool_calls` when consecutive tool calls appear in the input sequence, and tool outputs are represented as `role: tool` messages with `tool_call_id`.【F:codex-rs/codex-api/src/requests/chat.rs†L36-L355】
+
+### Responses WebSocket transport (`wss://.../responses`)
+
+When the “responses_websocket” wire API is enabled, Codex connects to a WebSocket URL derived from the provider base URL and the `responses` path.
+Requests are JSON messages with `type` set to either:
+
+- `response.create` with a `ResponseCreateWsRequest` payload (same fields as the HTTP Responses request).
+- `response.append` with a `ResponseAppendWsRequest` payload containing incremental `input` items.
+
+The WebSocket handshake may return `x-reasoning-included` and `x-codex-turn-state` headers that influence client behavior.【F:codex-rs/codex-api/src/common.rs†L144-L181】【F:codex-rs/codex-api/src/endpoint/responses_websocket.rs†L73-L113】【F:codex-rs/codex-api/src/endpoint/responses_websocket.rs†L115-L171】
+
 ## What we cannot confirm from this repo
 
 - There is no in‑repo description of what “WHAM” stands for, only its usage as a ChatGPT backend path prefix.

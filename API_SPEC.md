@@ -28,6 +28,46 @@ Codex requires a provider to declare which wire API it expects.
 In ChatGPT auth mode, the provider base URL switches to a ChatGPT backend host, but the same wire API concepts still apply: `Responses` corresponds to `/v1/responses` and `Chat` corresponds to `/v1/chat/completions`.
 The repo defaults OpenAI providers to the Responses wire API, with Chat as the legacy fallback.【F:codex-rs/core/src/model_provider_info.rs†L34-L52】【F:codex-rs/core/src/model_provider_info.rs†L136-L166】
 
+## Authentication APIs (ChatGPT login)
+
+These endpoints are used to obtain or refresh ChatGPT credentials that then authorize calls to the ChatGPT backend APIs described later in this document.
+They are part of the login flow in `codex login`, not part of task execution or model inference.
+
+### OAuth authorize and token exchange (browser flow)
+
+- `GET {issuer}/oauth/authorize?...`
+  - Built by the login server to start the OAuth authorization‑code flow.
+  - Includes parameters like `client_id`, `redirect_uri`, PKCE values, and optional `allowed_workspace_id` for forced workspace restrictions.【F:codex-rs/login/src/server.rs†L380-L418】
+
+- `POST {issuer}/oauth/token`
+  - Exchanges an authorization code for tokens (`id_token`, `access_token`, `refresh_token`) using `application/x-www-form-urlencoded` body data.
+  - Also used for token exchange to obtain an API‑key access token (grant type `urn:ietf:params:oauth:grant-type:token-exchange`).【F:codex-rs/login/src/server.rs†L510-L555】【F:codex-rs/login/src/server.rs†L700-L743】
+
+### Device code login (ChatGPT device flow)
+
+- `POST {issuer}/api/accounts/deviceauth/usercode`
+  - Requests a device code and polling interval for device‑code login.【F:codex-rs/login/src/device_code_auth.rs†L55-L97】
+
+- `POST {issuer}/api/accounts/deviceauth/token`
+  - Polls the device authorization endpoint until an authorization code is issued or the flow times out.【F:codex-rs/login/src/device_code_auth.rs†L99-L149】
+
+- `GET {issuer}/codex/device`
+  - Verification URL shown to the user for entering the device code in a browser.【F:codex-rs/login/src/device_code_auth.rs†L167-L176】
+
+- `GET {issuer}/deviceauth/callback`
+  - Redirect URL used after the device code flow to exchange an authorization code for tokens.【F:codex-rs/login/src/device_code_auth.rs†L195-L214】
+
+### Local callback endpoints (login server)
+
+These are local HTTP endpoints exposed by the CLI on `localhost` during login.
+They are not ChatGPT backend endpoints, but they are part of the end‑to‑end auth flow.
+
+- `GET http://localhost:{port}/auth/callback`
+  - Receives the OAuth authorization code and state from the browser flow and completes login.【F:codex-rs/login/src/server.rs†L112-L180】
+
+- `GET http://localhost:{port}/cancel`
+  - Used to signal a previously running login server to cancel if the port is already in use.【F:codex-rs/login/src/server.rs†L440-L466】
+
 ## ChatGPT base URLs and normalization
 
 ### Base URL configuration
@@ -108,6 +148,23 @@ The repo does not define the full server‑side API, but it does define the wire
 
 - **Responses API** (`/v1/responses`) is the default wire protocol for OpenAI and ChatGPT providers.
 - **Chat Completions API** (`/v1/chat/completions`) is the legacy wire protocol.
+
+In practice, Codex builds request paths relative to the provider base URL.
+For the default ChatGPT provider, this means the following paths are used under `https://chatgpt.com/backend-api/codex`:
+
+- `POST /responses`
+  - The core Responses API endpoint used for streaming and non‑streaming model output.
+  - The streaming client selects `responses` when the provider’s wire API is Responses.【F:codex-rs/codex-api/src/endpoint/chat.rs†L52-L74】
+
+- `POST /chat/completions`
+  - Used when the provider’s wire API is Chat, maintaining compatibility with the legacy Chat Completions format.【F:codex-rs/codex-api/src/endpoint/chat.rs†L52-L74】
+
+- `POST /responses/compact`
+  - Used to compact response history for providers supporting the Responses wire API (or explicit Compact wire API).【F:codex-rs/codex-api/src/endpoint/compact.rs†L24-L40】【F:codex-rs/codex-api/src/endpoint/compact.rs†L42-L74】
+
+- `GET /models?client_version=...`
+  - Used to retrieve the available model list and optional ETag for caching.
+  - The path is `models` relative to the provider base URL, with `client_version` appended as a query parameter.【F:codex-rs/codex-api/src/endpoint/models.rs†L33-L61】【F:codex-rs/codex-api/src/endpoint/models.rs†L63-L87】
 
 The provider definition requires you to specify which wire API is used, and Codex cannot auto‑detect it.
 That distinction is documented in the provider metadata and is explicitly referenced in comments and enums tied to these endpoints.【F:codex-rs/core/src/model_provider_info.rs†L34-L52】【F:codex-rs/core/src/model_provider_info.rs†L136-L166】
